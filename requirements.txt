@@ -1,8 +1,7 @@
--e  git+https://github.com/facebookresearch/sam2.git@0e78a118995e66bb27d78518c4bd9a3e95b4e266#egg=SAM-2 
+# -e  git+https://github.com/facebookresearch/sam2.git@0e78a118995e66bb27d78518c4bd9a3e95b4e266#egg=SAM-2 
 accelerate>=1.1.1
 conformer
 dashscope
-decord
 decord
 diffusers>=0.31.0
 easydict
@@ -27,7 +26,6 @@ onnxruntime
 openai-whisper
 opencv-python>=4.9.0.80
 pandas
-peft
 peft
 pyarrow
 pyworld

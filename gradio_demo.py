@@ -271,7 +271,6 @@ with gr.Blocks(title="Wan2.2 Demo") as demo:
             label="Checkpoint directory",
             choices=["./Wan2.2-T2V-A14B", "./Wan2.2-I2V-A14B", "./Wan2.2-TI2V-5B"],
             value="./Wan2.2-T2V-A14B",
-            placeholder="Path to downloaded checkpoint folder",
         )
         solver = gr.Dropdown(
             label="Sampler",

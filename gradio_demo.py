@@ -61,6 +61,15 @@ def _load_pipeline(task: str, ckpt_dir: str, convert_model_dtype: bool,
             convert_model_dtype=convert_model_dtype,
             t5_cpu=t5_cpu,
         )
+    elif task == "ti2v-5B":
+        pipeline = wan.WanTI2V(
+            config=cfg,
+            checkpoint_dir=ckpt_dir,
+            device_id=DEVICE_ID,
+            rank=0,
+            convert_model_dtype=convert_model_dtype,
+            t5_cpu=t5_cpu,
+        )
     else:
         raise gr.Error(f"Unsupported task: {task}")
 
@@ -141,7 +150,44 @@ def generate_video(task: str,
         prompt_path = output_dir / f"{file_stem}.txt"
         with open(prompt_path, "w", encoding="utf-8") as f:
             f.write(prompt)
+    elif task == "ti2v-5B":
+        # ti2v-5B supports both t2v and i2v modes
+        if image is not None:
+            # I2V mode
+            video = pipeline.generate(
+                prompt,
+                img=image.convert("RGB"),
+                max_area=MAX_AREA_CONFIGS[size_key],
+                frame_num=frame_num,
+                shift=float(shift),
+                sample_solver=solver,
+                sampling_steps=sampling_steps,
+                guide_scale=guide_scale,
+                seed=seed,
+                offload_model=offload_model,
+            )
+            # Save input image
+            image_path = output_dir / f"{file_stem}.png"
+            image.save(image_path)
+        else:
+            # T2V mode
+            video = pipeline.generate(
+                prompt,
+                size=SIZE_CONFIGS[size_key],
+                frame_num=frame_num,
+                shift=float(shift),
+                sample_solver=solver,
+                sampling_steps=sampling_steps,
+                guide_scale=guide_scale,
+                seed=seed,
+                offload_model=offload_model,
+            )
+        # Save prompt as text file
+        prompt_path = output_dir / f"{file_stem}.txt"
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            f.write(prompt)
     else:
+        # i2v-A14B
         if image is None:
             raise gr.Error("Please upload an initial image for I2V generation.")
         video = pipeline.generate(
@@ -178,9 +224,10 @@ def generate_video(task: str,
 
 
 DESCRIPTION = """# Wan2.2 Gradio Demo
-- Supports text-to-video with Wan2.2-A14B.
-- Optionally generate image-to-video clips if the I2V checkpoint is available.
-- Expect long generation times and high VRAM usage (recommended: ≥80GB GPU).
+- Supports text-to-video (T2V) with Wan2.2-T2V-A14B
+- Supports image-to-video (I2V) with Wan2.2-I2V-A14B
+- Supports text+image-to-video (TI2V) with Wan2.2-TI2V-5B (can work in both T2V and I2V modes)
+- Expect long generation times and high VRAM usage (recommended: ≥80GB GPU)
 """
 
 
@@ -194,10 +241,12 @@ def update_task_ui(task: str):
     steps_default = WAN_CONFIGS[task].sample_steps
     frame_default = WAN_CONFIGS[task].frame_num
     is_i2v = task == "i2v-A14B"
+    # ti2v-5B supports optional image input
+    show_image = task in ["i2v-A14B", "ti2v-5B"]
 
     return (
         gr.update(choices=sizes, value=default_size),
-        gr.update(visible=is_i2v),
+        gr.update(visible=show_image),
         gr.update(value=guide_default[0]),
         gr.update(
             value=guide_default[0] if is_i2v else guide_default[1],
@@ -215,7 +264,7 @@ with gr.Blocks(title="Wan2.2 Demo") as demo:
     with gr.Row():
         task = gr.Radio(
             label="Task",
-            choices=["t2v-A14B", "i2v-A14B"],
+            choices=["t2v-A14B", "i2v-A14B", "ti2v-5B"],
             value="t2v-A14B",
         )
         ckpt_dir = gr.Textbox(

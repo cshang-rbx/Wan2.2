@@ -267,8 +267,9 @@ with gr.Blocks(title="Wan2.2 Demo") as demo:
             choices=["t2v-A14B", "i2v-A14B", "ti2v-5B"],
             value="t2v-A14B",
         )
-        ckpt_dir = gr.Textbox(
+        ckpt_dir = gr.Dropdown(
             label="Checkpoint directory",
+            choices=["./Wan2.2-T2V-A14B", "./Wan2.2-I2V-A14B", "./Wan2.2-TI2V-5B"],
             value="./Wan2.2-T2V-A14B",
             placeholder="Path to downloaded checkpoint folder",
         )

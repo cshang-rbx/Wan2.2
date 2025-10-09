@@ -124,6 +124,9 @@ def generate_video(task: str,
     if task == "i2v-A14B":
         frame_num = cfg.frame_num
         guide_scale = (float(guide_low), float(guide_low))
+    elif task == "ti2v-5B":
+        # ti2v-5B uses single float for guide_scale, not tuple
+        guide_scale = float(guide_low)
 
     # Create output directory
     output_dir = Path("./output")
@@ -211,9 +214,16 @@ def generate_video(task: str,
             f.write(prompt)
 
     save_path = _save_video_tensor(video, cfg.sample_fps, str(video_path))
+    
+    # Format guide_scale for display
+    if isinstance(guide_scale, tuple):
+        guide_str = f"({guide_scale[0]:.2f}, {guide_scale[1]:.2f})"
+    else:
+        guide_str = f"{guide_scale:.2f}"
+    
     info = (
         f"Task: {task} | Size: {size_key} | Steps: {sampling_steps} | "
-        f"Guide: ({guide_scale[0]:.2f}, {guide_scale[1]:.2f}) | Seed: {seed}\n"
+        f"Guide: {guide_str} | Seed: {seed}\n"
         f"Saved to: {video_path}"
     )
 
@@ -243,14 +253,16 @@ def update_task_ui(task: str):
     is_i2v = task == "i2v-A14B"
     # ti2v-5B supports optional image input
     show_image = task in ["i2v-A14B", "ti2v-5B"]
+    # ti2v-5B and i2v-A14B use single guide_scale value
+    single_guide = task in ["i2v-A14B", "ti2v-5B"]
 
     return (
         gr.update(choices=sizes, value=default_size),
         gr.update(visible=show_image),
         gr.update(value=guide_default[0]),
         gr.update(
-            value=guide_default[0] if is_i2v else guide_default[1],
-            interactive=not is_i2v,
+            value=guide_default[0] if single_guide else guide_default[1],
+            interactive=not single_guide,
         ),
         gr.update(value=shift_default),
         gr.update(value=frame_default, interactive=not is_i2v),

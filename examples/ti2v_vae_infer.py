@@ -7,10 +7,12 @@ decodes the latent back to pixel space, and saves the reconstruction.
 """
 
 import argparse
+import math
 import os
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 
 from wan.configs import WAN_CONFIGS
 from wan.modules.vae2_2 import Wan2_2_VAE
@@ -38,11 +40,70 @@ def _save_video(video: torch.Tensor, path: str, fps: int) -> None:
     save_video(video.unsqueeze(0), save_file=path, fps=fps, nrow=1, normalize=True)
 
 
+def _make_stride_compatible(video: torch.Tensor,
+                            t_stride: int,
+                            h_stride: int,
+                            w_stride: int,
+                            mode: str) -> torch.Tensor:
+    """Adjust temporal and spatial sizes to satisfy stride constraints."""
+    c, t, h, w = video.shape
+
+    def _trim(value: int, stride: int, offset: int = 0) -> int:
+        trimmed = (value - offset) // stride * stride + offset
+        return max(trimmed, stride + offset)
+
+    def _pad(value: int, stride: int, offset: int = 0) -> int:
+        padded = math.ceil((value - offset) / stride) * stride + offset
+        return max(padded, stride + offset)
+
+    need_temporal_fix = (t - 1) % t_stride != 0
+    need_h_fix = h % h_stride != 0
+    need_w_fix = w % w_stride != 0
+
+    if mode == "error":
+        if need_temporal_fix:
+            raise ValueError(
+                f"Video length {t} is not compatible with the temporal stride {t_stride}. "
+                f"Please trim/pad the clip so that (frames - 1) is divisible by {t_stride}.")
+        if need_h_fix or need_w_fix:
+            raise ValueError(
+                f"Spatial size {(h, w)} must be divisible by ({h_stride}, {w_stride}).")
+        return video
+
+    if mode not in {"trim", "pad"}:
+        raise ValueError(f"Unsupported stride_compat option '{mode}'.")
+
+    new_t = t
+    new_h = h
+    new_w = w
+    if need_temporal_fix:
+        new_t = (_trim if mode == "trim" else _pad)(t, t_stride, offset=1)
+    if need_h_fix:
+        new_h = (_trim if mode == "trim" else _pad)(h, h_stride)
+    if need_w_fix:
+        new_w = (_trim if mode == "trim" else _pad)(w, w_stride)
+
+    if mode == "trim":
+        video = video[:, :new_t, :new_h, :new_w]
+    else:
+        pad_t = new_t - t
+        pad_h = new_h - h
+        pad_w = new_w - w
+        if pad_t > 0:
+            last = video[:, -1:].repeat(1, pad_t, 1, 1)
+            video = torch.cat([video, last], dim=1)
+        if pad_h > 0 or pad_w > 0:
+            video = F.pad(video, (0, pad_w, 0, pad_h), mode="replicate")
+
+    return video
+
+
 def run_inference(ckpt_dir: str,
                   video_path: str,
                   output_path: str,
                   device: torch.device,
-                  fps: Optional[int] = None) -> None:
+                  fps: Optional[int] = None,
+                  stride_compat: str = "error") -> None:
     cfg = WAN_CONFIGS["ti2v-5B"]
     vae_path = os.path.join(ckpt_dir, cfg.vae_checkpoint)
     if not os.path.exists(vae_path):
@@ -52,14 +113,7 @@ def run_inference(ckpt_dir: str,
 
     video = _load_video(video_path).to(device)
     t_stride, h_stride, w_stride = cfg.vae_stride
-    if (video.shape[1] - 1) % t_stride != 0:
-        raise ValueError(
-            f"Video length {video.shape[1]} is not compatible with the temporal stride "
-            f"{t_stride}. Please trim/pad the clip so that (frames - 1) is divisible by {t_stride}.")
-    if video.shape[-2] % h_stride != 0 or video.shape[-1] % w_stride != 0:
-        raise ValueError(
-            f"Spatial size {(video.shape[-2], video.shape[-1])} must be divisible by "
-            f"({h_stride}, {w_stride}).")
+    video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
 
     vae = Wan2_2_VAE(vae_pth=vae_path, device=device)
     vae.model = vae.model.to(device)
@@ -93,6 +147,11 @@ def parse_args() -> argparse.Namespace:
         "--cpu",
         action="store_true",
         help="Force inference on CPU even if CUDA is available.")
+    parser.add_argument(
+        "--stride-compat",
+        choices=["error", "trim", "pad"],
+        default="error",
+        help="How to handle temporal/spatial sizes that do not match the VAE stride.")
     return parser.parse_args()
 
 
@@ -103,7 +162,8 @@ def main() -> None:
         ckpt_dir=args.ckpt_dir,
         video_path=args.video,
         output_path=args.output,
-        device=device)
+        device=device,
+        stride_compat=args.stride_compat)
 
 
 if __name__ == "__main__":

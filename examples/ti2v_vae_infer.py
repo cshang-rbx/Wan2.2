@@ -150,7 +150,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stride-compat",
         choices=["error", "trim", "pad"],
-        default="error",
+        default="pad",
         help="How to handle temporal/spatial sizes that do not match the VAE stride.")
     return parser.parse_args()
 

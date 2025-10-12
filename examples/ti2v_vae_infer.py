@@ -9,7 +9,7 @@ decodes the latent back to pixel space, and saves the reconstruction.
 import argparse
 import math
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -38,6 +38,21 @@ def _load_video(path: str) -> torch.Tensor:
 def _save_video(video: torch.Tensor, path: str, fps: int) -> None:
     """Save a (C, T, H, W) tensor to disk using Wan's helper."""
     save_video(video.unsqueeze(0), save_file=path, fps=fps, nrow=1, normalize=True)
+
+
+def _resize_video(video: torch.Tensor, size: Optional[Tuple[int, int]]) -> torch.Tensor:
+    """Resize video to (width, height) if requested."""
+    if size is None:
+        return video
+    width, height = size
+    if width <= 0 or height <= 0:
+        raise ValueError("Resize dimensions must be positive.")
+    video = F.interpolate(
+        video.permute(1, 0, 2, 3),
+        size=(height, width),
+        mode="bilinear",
+        align_corners=False)
+    return video.permute(1, 0, 2, 3)
 
 
 def _make_stride_compatible(video: torch.Tensor,
@@ -107,7 +122,8 @@ def run_inference(ckpt_dir: str,
                   output_path: str,
                   device: torch.device,
                   fps: Optional[int] = None,
-                  stride_compat: str = "error") -> None:
+                  stride_compat: str = "error",
+                  resize: Optional[Tuple[int, int]] = None) -> None:
     cfg = WAN_CONFIGS["ti2v-5B"]
     vae_path = os.path.join(ckpt_dir, cfg.vae_checkpoint)
     if not os.path.exists(vae_path):
@@ -116,6 +132,7 @@ def run_inference(ckpt_dir: str,
             "Make sure --ckpt_dir points to the extracted TI2V-5B weights.")
 
     video = _load_video(video_path).to(device)
+    video = _resize_video(video, resize)
     t_stride, h_stride, w_stride = cfg.vae_stride
     video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
 
@@ -156,18 +173,37 @@ def parse_args() -> argparse.Namespace:
         choices=["error", "trim", "pad"],
         default="pad",
         help="How to handle temporal/spatial sizes that do not match the VAE stride.")
+    parser.add_argument(
+        "--resize",
+        type=str,
+        default=None,
+        help="Resize input to WIDTHxHEIGHT before encoding (e.g. 320x240).")
     return parser.parse_args()
+
+
+def _parse_resize_arg(resize: Optional[str]) -> Optional[Tuple[int, int]]:
+    if resize is None:
+        return None
+    value = resize.strip().lower()
+    if value in {"", "none"}:
+        return None
+    if "x" not in value:
+        raise ValueError("Resize format must be WIDTHxHEIGHT, e.g. 320x240.")
+    width_str, height_str = value.split("x", 1)
+    return (int(width_str), int(height_str))
 
 
 def main() -> None:
     args = parse_args()
+    resize = _parse_resize_arg(args.resize)
     device = torch.device("cpu") if args.cpu or not torch.cuda.is_available() else torch.device("cuda:0")
     run_inference(
         ckpt_dir=args.ckpt_dir,
         video_path=args.video,
         output_path=args.output,
         device=device,
-        stride_compat=args.stride_compat)
+        stride_compat=args.stride_compat,
+        resize=resize)
 
 
 if __name__ == "__main__":

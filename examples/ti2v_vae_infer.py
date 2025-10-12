@@ -93,7 +93,11 @@ def _make_stride_compatible(video: torch.Tensor,
             last = video[:, -1:].repeat(1, pad_t, 1, 1)
             video = torch.cat([video, last], dim=1)
         if pad_h > 0 or pad_w > 0:
-            video = F.pad(video, (0, pad_w, 0, pad_h), mode="replicate")
+            # Replication padding on very large tensors can overflow CUDA's 32-bit indexing,
+            # so perform the padding on CPU before moving back to the target device.
+            pad_args = (0, pad_w, 0, pad_h)
+            target_device = video.device
+            video = F.pad(video.cpu(), pad_args, mode="replicate").to(target_device)
 
     return video
 

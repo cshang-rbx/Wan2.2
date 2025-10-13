@@ -18,6 +18,7 @@ import torch.nn.functional as F
 
 from wan.configs import WAN_CONFIGS
 from wan.modules.vae2_2 import Wan2_2_VAE
+from wan.modules.vae2_1 import Wan2_1_VAE
 from wan.utils.utils import save_video
 
 try:
@@ -151,8 +152,9 @@ def run_inference(
     stride_compat: str = "pad",
     resize: Optional[Tuple[int, int]] = None,
     use_bfloat16: bool = False,
+    version: str = "2.2",
 ) -> None:
-    cfg = WAN_CONFIGS["ti2v-5B"]
+    cfg = WAN_CONFIGS["ti2v-5B"] if version == "2.2" else WAN_CONFIGS["i2v-A14B"]
     vae_path = os.path.join(ckpt_dir, cfg.vae_checkpoint)
     if not os.path.exists(vae_path):
         raise FileNotFoundError(
@@ -169,7 +171,10 @@ def run_inference(
     video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
 
     dtype = torch.bfloat16 if use_bfloat16 else torch.float32
-    vae = Wan2_2_VAE(vae_pth=vae_path, device=device, dtype=dtype)
+    if version == "2.2":
+        vae = Wan2_2_VAE(vae_pth=vae_path, device=device, dtype=dtype)
+    else:
+        vae = Wan2_1_VAE(vae_pth=vae_path, device=device, dtype=dtype)
     vae.model = vae.model.to(device)
 
     with torch.inference_mode():
@@ -229,6 +234,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run the VAE in bfloat16 for reduced memory usage.",
     )
+    parser.add_argument(
+        "--version",
+        choices=["2.2", "2.1"],
+        default="2.2",
+        help="Which Wan version to use (affects model and VAE checkpoint names).",
+    )
     return parser.parse_args()
 
 
@@ -260,6 +271,7 @@ def main() -> None:
         stride_compat=args.stride_compat,
         resize=resize,
         use_bfloat16=args.bfloat16,
+        version=args.version,
     )
 
 

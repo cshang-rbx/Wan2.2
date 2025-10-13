@@ -197,6 +197,8 @@ def run_inference(
     infer_start = time.perf_counter()
     with torch.inference_mode():
         latents = vae.encode([video])[0]
+        # force sync
+        torch.cuda.synchronize()
         timings["model_encoding"] = time.perf_counter() - infer_start
         decode_start = time.perf_counter()
         recon = vae.decode([latents])[0].cpu()

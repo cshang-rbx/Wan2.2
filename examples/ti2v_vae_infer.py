@@ -2,8 +2,10 @@
 """
 Minimal example for running the Wan2.2 TI2V-5B VAE.
 
-This script loads a video file, encodes it with the VAE shipped with TI2V-5B,
-decodes the latent back to pixel space, and saves the reconstruction.
+This script loads a video file, optionally downsizes it for inference, encodes it
+with the VAE shipped with TI2V-5B, decodes the latent back to pixel space, and
+finally writes a reconstruction that matches the input video’s original frame
+count, resolution, and frame rate.
 """
 
 import argparse
@@ -24,15 +26,21 @@ except ImportError:  # pragma: no cover - imageio.v3 is preferred but optional
     import imageio as iio  # type: ignore
 
 
-def _load_video(path: str) -> torch.Tensor:
-    """Load a video file and return a tensor in (C, T, H, W) with values in [-1, 1]."""
-    frames = iio.imread(path, index=None)  # (T, H, W, C), dtype=uint8
+def _load_video(path: str) -> Tuple[torch.Tensor, Optional[float]]:
+    """Load a video file and return tensor + fps."""
+    frames = iio.imread(path, index=None)
     if frames.ndim != 4:
         raise ValueError(f"Expected a 4D video tensor, got shape {frames.shape}.")
     if frames.shape[-1] != 3:
         raise ValueError("Only RGB videos are supported.")
     tensor = torch.from_numpy(frames).float() / 127.5 - 1.0  # map to [-1, 1]
-    return tensor.permute(3, 0, 1, 2)  # (C, T, H, W)
+    fps = None
+    try:
+        meta = iio.immeta(path)
+        fps = meta.get("fps")
+    except Exception:
+        pass
+    return tensor.permute(3, 0, 1, 2), fps
 
 
 def _save_video(video: torch.Tensor, path: str, fps: int) -> None:
@@ -47,12 +55,28 @@ def _resize_video(video: torch.Tensor, size: Optional[Tuple[int, int]]) -> torch
     width, height = size
     if width <= 0 or height <= 0:
         raise ValueError("Resize dimensions must be positive.")
+    if video.shape[-1] == width and video.shape[-2] == height:
+        return video
     video = F.interpolate(
         video.permute(1, 0, 2, 3),
         size=(height, width),
         mode="bilinear",
         align_corners=False)
     return video.permute(1, 0, 2, 3)
+
+
+def _match_frame_count(video: torch.Tensor, target_frames: int) -> torch.Tensor:
+    """Align the frame count with the target length by trimming or padding."""
+    current = video.shape[1]
+    if current == target_frames:
+        return video
+    if current > target_frames:
+        return video[:, :target_frames, :, :]
+    if current == 0:
+        raise ValueError("Input video has no frames after preprocessing.")
+    pad = target_frames - current
+    last = video[:, -1:].repeat(1, pad, 1, 1)
+    return torch.cat([video, last], dim=1)
 
 
 def _make_stride_compatible(video: torch.Tensor,
@@ -122,7 +146,7 @@ def run_inference(ckpt_dir: str,
                   output_path: str,
                   device: torch.device,
                   fps: Optional[int] = None,
-                  stride_compat: str = "error",
+                  stride_compat: str = "pad",
                   resize: Optional[Tuple[int, int]] = None) -> None:
     cfg = WAN_CONFIGS["ti2v-5B"]
     vae_path = os.path.join(ckpt_dir, cfg.vae_checkpoint)
@@ -131,7 +155,10 @@ def run_inference(ckpt_dir: str,
             f"Could not find VAE checkpoint at '{vae_path}'. "
             "Make sure --ckpt_dir points to the extracted TI2V-5B weights.")
 
-    video = _load_video(video_path).to(device)
+    video_cpu, input_fps = _load_video(video_path)
+    orig_frames = video_cpu.shape[1]
+    orig_size = (video_cpu.shape[-1], video_cpu.shape[-2])  # (width, height)
+    video = video_cpu.to(device)
     video = _resize_video(video, resize)
     t_stride, h_stride, w_stride = cfg.vae_stride
     video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
@@ -143,9 +170,16 @@ def run_inference(ckpt_dir: str,
         latents = vae.encode([video])[0]
         recon = vae.decode([latents])[0].cpu()
 
-    _save_video(recon, output_path, fps or cfg.sample_fps)
+    recon = _match_frame_count(recon, orig_frames)
+    recon = _resize_video(recon, orig_size)
+    output_fps = fps or input_fps or cfg.sample_fps
+    output_fps = float(output_fps)
+    _save_video(recon, output_path, output_fps)
 
-    print(f"Input video shape: {tuple(video.shape)}")
+    print(f"Original input shape: {(3, orig_frames, orig_size[1], orig_size[0])}")
+    print(f"Preprocessed input shape: {tuple(video.shape)}")
+    print(f"Output video shape: {tuple(recon.shape)}")
+    print(f"Output FPS: {output_fps}")
     print(f"Latent shape: {tuple(latents.shape)}")
     print(f"Reconstruction saved to: {output_path}")
 
@@ -176,8 +210,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resize",
         type=str,
-        default=None,
-        help="Resize input to WIDTHxHEIGHT before encoding (e.g. 320x240).")
+        default="1280x704",
+        help="Resize input to WIDTHxHEIGHT before encoding (e.g. 1280x704).")
     return parser.parse_args()
 
 
@@ -188,8 +222,8 @@ def _parse_resize_arg(resize: Optional[str]) -> Optional[Tuple[int, int]]:
     if value in {"", "none"}:
         return None
     if "x" not in value:
-        raise ValueError("Resize format must be WIDTHxHEIGHT, e.g. 320x240.")
-    width_str, height_str = value.split("x", 1)
+        raise ValueError("Resize format must be WIDTHxHEIGHT, e.g. 1280x704.")
+    width_str, height_str = value.split("x", 1) if "x" in value else value.split("*", 1) 
     return (int(width_str), int(height_str))
 
 

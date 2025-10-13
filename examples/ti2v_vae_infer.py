@@ -150,6 +150,7 @@ def run_inference(
     fps: Optional[int] = None,
     stride_compat: str = "pad",
     resize: Optional[Tuple[int, int]] = None,
+    use_bfloat16: bool = False,
 ) -> None:
     cfg = WAN_CONFIGS["ti2v-5B"]
     vae_path = os.path.join(ckpt_dir, cfg.vae_checkpoint)
@@ -167,7 +168,8 @@ def run_inference(
     t_stride, h_stride, w_stride = cfg.vae_stride
     video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
 
-    vae = Wan2_2_VAE(vae_pth=vae_path, device=device)
+    dtype = torch.bfloat16 if use_bfloat16 else torch.float32
+    vae = Wan2_2_VAE(vae_pth=vae_path, device=device, dtype=dtype)
     vae.model = vae.model.to(device)
 
     with torch.inference_mode():
@@ -219,8 +221,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--resize",
         type=str,
-        default="1280x704",
+        default=None,
         help="Resize input to WIDTHxHEIGHT before encoding (e.g. 1280x704).",
+    )
+    parser.add_argument(
+        "--bfloat16",
+        action="store_true",
+        help="Run the VAE in bfloat16 for reduced memory usage.",
     )
     return parser.parse_args()
 
@@ -231,7 +238,7 @@ def _parse_resize_arg(resize: Optional[str]) -> Optional[Tuple[int, int]]:
     value = resize.strip().lower()
     if value in {"", "none"}:
         return None
-    if "x" not in value:
+    if "x" not in value and "*" not in value:
         raise ValueError("Resize format must be WIDTHxHEIGHT, e.g. 1280x704.")
     width_str, height_str = value.split("x", 1) if "x" in value else value.split("*", 1)
     return (int(width_str), int(height_str))
@@ -252,6 +259,7 @@ def main() -> None:
         device=device,
         stride_compat=args.stride_compat,
         resize=resize,
+        use_bfloat16=args.bfloat16,
     )
 
 

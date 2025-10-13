@@ -11,6 +11,7 @@ count, resolution, and frame rate.
 import argparse
 import math
 import os
+import time
 from typing import Optional, Tuple
 
 import torch
@@ -162,37 +163,49 @@ def run_inference(
             "Make sure --ckpt_dir points to the extracted TI2V-5B weights."
         )
 
+    timings = {}
+
+    load_start = time.perf_counter()
     video_cpu, input_fps = _load_video(video_path)
     orig_frames = video_cpu.shape[1]
     orig_size = (video_cpu.shape[-1], video_cpu.shape[-2])  # (width, height)
     video = video_cpu.to(device)
     video = _resize_video(video, resize)
     reference_fps = float(fps or input_fps or cfg.sample_fps)
-    if resize is not None:
+    resized_snapshot = video.detach() if resize is not None else None
+    t_stride, h_stride, w_stride = cfg.vae_stride
+    video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
+    timings["input_loading"] = time.perf_counter() - load_start
+
+    if resized_snapshot is not None:
         base, ext = os.path.splitext(output_path)
         if not ext:
             ext = ".mp4"
         resized_path = f"{base}_resized{ext}"
-        _save_video(video.detach().cpu(), resized_path, reference_fps)
+        _save_video(resized_snapshot.cpu(), resized_path, reference_fps)
         print(f"Resized input saved to: {resized_path}")
-    t_stride, h_stride, w_stride = cfg.vae_stride
-    video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
 
+    model_start = time.perf_counter()
     dtype = torch.bfloat16 if use_bfloat16 else torch.float32
     if version == "2.2":
         vae = Wan2_2_VAE(vae_pth=vae_path, device=device, dtype=dtype)
     else:
         vae = Wan2_1_VAE(vae_pth=vae_path, device=device, dtype=dtype)
     vae.model = vae.model.to(device)
+    timings["model_loading"] = time.perf_counter() - model_start
 
+    infer_start = time.perf_counter()
     with torch.inference_mode():
         latents = vae.encode([video])[0]
         recon = vae.decode([latents])[0].cpu()
+    timings["model_inference"] = time.perf_counter() - infer_start
 
     recon = _match_frame_count(recon, orig_frames)
     recon = _resize_video(recon, orig_size)
     output_fps = reference_fps
+    output_start = time.perf_counter()
     _save_video(recon, output_path, output_fps)
+    timings["output_saving"] = time.perf_counter() - output_start
 
     print(f"Original input shape: {(3, orig_frames, orig_size[1], orig_size[0])}")
     print(f"Preprocessed input shape: {tuple(video.shape)}")
@@ -200,6 +213,13 @@ def run_inference(
     print(f"Output FPS: {output_fps}")
     print(f"Latent shape: {tuple(latents.shape)}")
     print(f"Reconstruction saved to: {output_path}")
+    print(
+        "Timings (s): "
+        f"input loading={timings['input_loading']:.2f}, "
+        f"model loading={timings['model_loading']:.2f}, "
+        f"inference={timings['model_inference']:.2f}, "
+        f"output saving={timings['output_saving']:.2f}"
+    )
 
 
 def parse_args() -> argparse.Namespace:

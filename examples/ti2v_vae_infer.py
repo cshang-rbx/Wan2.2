@@ -167,6 +167,14 @@ def run_inference(
     orig_size = (video_cpu.shape[-1], video_cpu.shape[-2])  # (width, height)
     video = video_cpu.to(device)
     video = _resize_video(video, resize)
+    reference_fps = float(fps or input_fps or cfg.sample_fps)
+    if resize is not None:
+        base, ext = os.path.splitext(output_path)
+        if not ext:
+            ext = ".mp4"
+        resized_path = f"{base}_resized{ext}"
+        _save_video(video.detach().cpu(), resized_path, reference_fps)
+        print(f"Resized input saved to: {resized_path}")
     t_stride, h_stride, w_stride = cfg.vae_stride
     video = _make_stride_compatible(video, t_stride, h_stride, w_stride, stride_compat)
 
@@ -183,8 +191,7 @@ def run_inference(
 
     recon = _match_frame_count(recon, orig_frames)
     recon = _resize_video(recon, orig_size)
-    output_fps = fps or input_fps or cfg.sample_fps
-    output_fps = float(output_fps)
+    output_fps = reference_fps
     _save_video(recon, output_path, output_fps)
 
     print(f"Original input shape: {(3, orig_frames, orig_size[1], orig_size[0])}")

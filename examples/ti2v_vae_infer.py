@@ -197,7 +197,10 @@ def run_inference(
     infer_start = time.perf_counter()
     with torch.inference_mode():
         latents = vae.encode([video])[0]
+        timings["model_encoding"] = time.perf_counter() - infer_start
+        decode_start = time.perf_counter()
         recon = vae.decode([latents])[0].cpu()
+        timings["model_decoding"] = time.perf_counter() - decode_start
     timings["model_inference"] = time.perf_counter() - infer_start
 
     recon = _match_frame_count(recon, orig_frames)
@@ -218,7 +221,9 @@ def run_inference(
         f"input loading={timings['input_loading']:.2f}, "
         f"model loading={timings['model_loading']:.2f}, "
         f"inference={timings['model_inference']:.2f}, "
-        f"output saving={timings['output_saving']:.2f}"
+        f"output saving={timings['output_saving']:.2f}, \n"
+        f"\tencoding={timings['model_encoding']:.2f}, \n"
+        f"\tdecoding={timings['model_decoding']:.2f}"
     )
 
 

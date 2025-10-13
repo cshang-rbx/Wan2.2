@@ -61,7 +61,8 @@ def _resize_video(video: torch.Tensor, size: Optional[Tuple[int, int]]) -> torch
         video.permute(1, 0, 2, 3),
         size=(height, width),
         mode="bilinear",
-        align_corners=False)
+        align_corners=False,
+    )
     return video.permute(1, 0, 2, 3)
 
 
@@ -79,11 +80,9 @@ def _match_frame_count(video: torch.Tensor, target_frames: int) -> torch.Tensor:
     return torch.cat([video, last], dim=1)
 
 
-def _make_stride_compatible(video: torch.Tensor,
-                            t_stride: int,
-                            h_stride: int,
-                            w_stride: int,
-                            mode: str) -> torch.Tensor:
+def _make_stride_compatible(
+    video: torch.Tensor, t_stride: int, h_stride: int, w_stride: int, mode: str
+) -> torch.Tensor:
     """Adjust temporal and spatial sizes to satisfy stride constraints."""
     c, t, h, w = video.shape
 
@@ -103,10 +102,12 @@ def _make_stride_compatible(video: torch.Tensor,
         if need_temporal_fix:
             raise ValueError(
                 f"Video length {t} is not compatible with the temporal stride {t_stride}. "
-                f"Please trim/pad the clip so that (frames - 1) is divisible by {t_stride}.")
+                f"Please trim/pad the clip so that (frames - 1) is divisible by {t_stride}."
+            )
         if need_h_fix or need_w_fix:
             raise ValueError(
-                f"Spatial size {(h, w)} must be divisible by ({h_stride}, {w_stride}).")
+                f"Spatial size {(h, w)} must be divisible by ({h_stride}, {w_stride})."
+            )
         return video
 
     if mode not in {"trim", "pad"}:
@@ -141,19 +142,22 @@ def _make_stride_compatible(video: torch.Tensor,
     return video
 
 
-def run_inference(ckpt_dir: str,
-                  video_path: str,
-                  output_path: str,
-                  device: torch.device,
-                  fps: Optional[int] = None,
-                  stride_compat: str = "pad",
-                  resize: Optional[Tuple[int, int]] = None) -> None:
+def run_inference(
+    ckpt_dir: str,
+    video_path: str,
+    output_path: str,
+    device: torch.device,
+    fps: Optional[int] = None,
+    stride_compat: str = "pad",
+    resize: Optional[Tuple[int, int]] = None,
+) -> None:
     cfg = WAN_CONFIGS["ti2v-5B"]
     vae_path = os.path.join(ckpt_dir, cfg.vae_checkpoint)
     if not os.path.exists(vae_path):
         raise FileNotFoundError(
             f"Could not find VAE checkpoint at '{vae_path}'. "
-            "Make sure --ckpt_dir points to the extracted TI2V-5B weights.")
+            "Make sure --ckpt_dir points to the extracted TI2V-5B weights."
+        )
 
     video_cpu, input_fps = _load_video(video_path)
     orig_frames = video_cpu.shape[1]
@@ -189,29 +193,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ckpt_dir",
         required=True,
-        help="Directory containing the TI2V-5B checkpoints (expects Wan2.2_VAE.pth).")
+        help="Directory containing the TI2V-5B checkpoints (expects Wan2.2_VAE.pth).",
+    )
     parser.add_argument(
         "--video",
         default="examples/wan_animate/animate/video.mp4",
-        help="Input video to encode and decode. Defaults to the sample clip.")
+        help="Input video to encode and decode. Defaults to the sample clip.",
+    )
     parser.add_argument(
         "--output",
         default="ti2v_vae_reconstruction.mp4",
-        help="Where to write the reconstructed video.")
+        help="Where to write the reconstructed video.",
+    )
     parser.add_argument(
         "--cpu",
         action="store_true",
-        help="Force inference on CPU even if CUDA is available.")
+        help="Force inference on CPU even if CUDA is available.",
+    )
     parser.add_argument(
         "--stride-compat",
         choices=["error", "trim", "pad"],
         default="pad",
-        help="How to handle temporal/spatial sizes that do not match the VAE stride.")
+        help="How to handle temporal/spatial sizes that do not match the VAE stride.",
+    )
     parser.add_argument(
         "--resize",
         type=str,
         default="1280x704",
-        help="Resize input to WIDTHxHEIGHT before encoding (e.g. 1280x704).")
+        help="Resize input to WIDTHxHEIGHT before encoding (e.g. 1280x704).",
+    )
     return parser.parse_args()
 
 
@@ -223,21 +233,26 @@ def _parse_resize_arg(resize: Optional[str]) -> Optional[Tuple[int, int]]:
         return None
     if "x" not in value:
         raise ValueError("Resize format must be WIDTHxHEIGHT, e.g. 1280x704.")
-    width_str, height_str = value.split("x", 1) if "x" in value else value.split("*", 1) 
+    width_str, height_str = value.split("x", 1) if "x" in value else value.split("*", 1)
     return (int(width_str), int(height_str))
 
 
 def main() -> None:
     args = parse_args()
     resize = _parse_resize_arg(args.resize)
-    device = torch.device("cpu") if args.cpu or not torch.cuda.is_available() else torch.device("cuda:0")
+    device = (
+        torch.device("cpu")
+        if args.cpu or not torch.cuda.is_available()
+        else torch.device("cuda:0")
+    )
     run_inference(
         ckpt_dir=args.ckpt_dir,
         video_path=args.video,
         output_path=args.output,
         device=device,
         stride_compat=args.stride_compat,
-        resize=resize)
+        resize=resize,
+    )
 
 
 if __name__ == "__main__":

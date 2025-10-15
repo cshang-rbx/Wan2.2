@@ -93,7 +93,8 @@ def save_video(tensor,
                suffix='.mp4',
                nrow=8,
                normalize=True,
-               value_range=(-1, 1)):
+               value_range=(-1, 1), 
+               quality=8):
     # cache file
     cache_file = osp.join('/tmp', rand_name(
         suffix=suffix)) if save_file is None else save_file
@@ -112,7 +113,7 @@ def save_video(tensor,
 
         # write video
         writer = imageio.get_writer(
-            cache_file, fps=fps, codec='libx264', quality=8)
+            cache_file, fps=fps, codec='libx264', quality=quality)
         for frame in tensor.numpy():
             writer.append_data(frame)
         writer.close()

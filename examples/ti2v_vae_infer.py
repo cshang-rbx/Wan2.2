@@ -45,9 +45,9 @@ def _load_video(path: str) -> Tuple[torch.Tensor, Optional[float]]:
     return tensor.permute(3, 0, 1, 2), fps
 
 
-def _save_video(video: torch.Tensor, path: str, fps: int) -> None:
+def _save_video(video: torch.Tensor, path: str, fps: int, quality=8) -> None:
     """Save a (C, T, H, W) tensor to disk using Wan's helper."""
-    save_video(video.unsqueeze(0), save_file=path, fps=fps, nrow=1, normalize=True)
+    save_video(video.unsqueeze(0), save_file=path, fps=fps, nrow=1, normalize=True, quality=quality)
 
 
 def _resize_video(video: torch.Tensor, size: Optional[Tuple[int, int]]) -> torch.Tensor:
@@ -182,7 +182,7 @@ def run_inference(
         if not ext:
             ext = ".mp4"
         resized_path = f"{base}_resized{ext}"
-        _save_video(resized_snapshot.cpu(), resized_path, reference_fps)
+        _save_video(resized_snapshot.cpu(), resized_path, reference_fps, quality=5)
         print(f"Resized input saved to: {resized_path}")
 
     model_start = time.perf_counter()
@@ -209,7 +209,7 @@ def run_inference(
     recon = _resize_video(recon, orig_size)
     output_fps = reference_fps
     output_start = time.perf_counter()
-    _save_video(recon, output_path, output_fps)
+    _save_video(recon, output_path, output_fps, quality=5)
     timings["output_saving"] = time.perf_counter() - output_start
 
     print(f"Original input shape: {(3, orig_frames, orig_size[1], orig_size[0])}")

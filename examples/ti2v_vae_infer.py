@@ -182,8 +182,8 @@ def run_inference(
         if not ext:
             ext = ".mp4"
         resized_path = f"{base}_resized{ext}"
-        _save_video(resized_snapshot.cpu(), resized_path, reference_fps, quality=5)
-        print(f"Resized input saved to: {resized_path}")
+        # _save_video(resized_snapshot.cpu(), resized_path, reference_fps, quality=5)
+        # print(f"Resized input saved to: {resized_path}")
 
     model_start = time.perf_counter()
     dtype = torch.bfloat16 if use_bfloat16 else torch.float32

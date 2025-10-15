@@ -1,15 +1,16 @@
 # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
-from torch import nn
-import torch
-from typing import Tuple, Optional
-from einops import rearrange
-import torch.nn.functional as F
 import math
+from typing import Optional, Tuple
+
+import torch
+import torch.nn.functional as F
+from einops import rearrange
+from torch import nn
+
 from ...distributed.util import gather_forward, get_rank, get_world_size
 
-
 try:
-    from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
+    from flash_attn import flash_attn_func, flash_attn_qkvpacked_func
 except ImportError:
     flash_attn_func = None
 
@@ -67,7 +68,9 @@ def attention(
     if mode == "torch":
         if attn_mask is not None and attn_mask.dtype != torch.bool:
             attn_mask = attn_mask.to(q.dtype)
-        x = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=drop_rate, is_causal=causal)
+        x = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=attn_mask, dropout_p=drop_rate, is_causal=causal
+        )
 
     elif mode == "flash":
         x = flash_attn_func(
@@ -75,7 +78,9 @@ def attention(
             k,
             v,
         )
-        x = x.view(batch_size, max_seqlen_q, x.shape[-2], x.shape[-1])  # reshape x to [b, s, a, d]
+        x = x.view(
+            batch_size, max_seqlen_q, x.shape[-2], x.shape[-1]
+        )  # reshape x to [b, s, a, d]
     elif mode == "vanilla":
         scale_factor = 1 / math.sqrt(q.size(-1))
 
@@ -84,8 +89,12 @@ def attention(
         attn_bias = torch.zeros(b, a, s, s1, dtype=q.dtype, device=q.device)
         if causal:
             # Only applied to self attention
-            assert attn_mask is None, "Causal mask and attn_mask cannot be used together"
-            temp_mask = torch.ones(b, a, s, s, dtype=torch.bool, device=q.device).tril(diagonal=0)
+            assert (
+                attn_mask is None
+            ), "Causal mask and attn_mask cannot be used together"
+            temp_mask = torch.ones(b, a, s, s, dtype=torch.bool, device=q.device).tril(
+                diagonal=0
+            )
             attn_bias.masked_fill_(temp_mask.logical_not(), float("-inf"))
             attn_bias.to(q.dtype)
 
@@ -110,51 +119,69 @@ def attention(
 
 
 class CausalConv1d(nn.Module):
-
-    def __init__(self, chan_in, chan_out, kernel_size=3, stride=1, dilation=1, pad_mode="replicate", **kwargs):
+    def __init__(
+        self,
+        chan_in,
+        chan_out,
+        kernel_size=3,
+        stride=1,
+        dilation=1,
+        pad_mode="replicate",
+        **kwargs,
+    ):
         super().__init__()
 
         self.pad_mode = pad_mode
         padding = (kernel_size - 1, 0)  # T
         self.time_causal_padding = padding
 
-        self.conv = nn.Conv1d(chan_in, chan_out, kernel_size, stride=stride, dilation=dilation, **kwargs)
+        self.conv = nn.Conv1d(
+            chan_in, chan_out, kernel_size, stride=stride, dilation=dilation, **kwargs
+        )
 
     def forward(self, x):
         x = F.pad(x, self.time_causal_padding, mode=self.pad_mode)
         return self.conv(x)
 
 
-
 class FaceEncoder(nn.Module):
-    def __init__(self, in_dim: int, hidden_dim: int, num_heads=int, dtype=None, device=None):
+    def __init__(
+        self, in_dim: int, hidden_dim: int, num_heads=int, dtype=None, device=None
+    ):
         factory_kwargs = {"dtype": dtype, "device": device}
         super().__init__()
 
         self.num_heads = num_heads
         self.conv1_local = CausalConv1d(in_dim, 1024 * num_heads, 3, stride=1)
-        self.norm1 = nn.LayerNorm(hidden_dim // 8, elementwise_affine=False, eps=1e-6, **factory_kwargs)
+        self.norm1 = nn.LayerNorm(
+            hidden_dim // 8, elementwise_affine=False, eps=1e-6, **factory_kwargs
+        )
         self.act = nn.SiLU()
         self.conv2 = CausalConv1d(1024, 1024, 3, stride=2)
         self.conv3 = CausalConv1d(1024, 1024, 3, stride=2)
 
         self.out_proj = nn.Linear(1024, hidden_dim)
-        self.norm1 = nn.LayerNorm(1024, elementwise_affine=False, eps=1e-6, **factory_kwargs)
+        self.norm1 = nn.LayerNorm(
+            1024, elementwise_affine=False, eps=1e-6, **factory_kwargs
+        )
 
-        self.norm2 = nn.LayerNorm(1024, elementwise_affine=False, eps=1e-6, **factory_kwargs)
+        self.norm2 = nn.LayerNorm(
+            1024, elementwise_affine=False, eps=1e-6, **factory_kwargs
+        )
 
-        self.norm3 = nn.LayerNorm(1024, elementwise_affine=False, eps=1e-6, **factory_kwargs)
+        self.norm3 = nn.LayerNorm(
+            1024, elementwise_affine=False, eps=1e-6, **factory_kwargs
+        )
 
         self.padding_tokens = nn.Parameter(torch.zeros(1, 1, 1, hidden_dim))
 
     def forward(self, x):
-        
         x = rearrange(x, "b t c -> b c t")
         b, c, t = x.shape
 
         x = self.conv1_local(x)
         x = rearrange(x, "b (n c) t -> (b n) t c", n=self.num_heads)
-        
+
         x = self.norm1(x)
         x = self.act(x)
         x = rearrange(x, "b t c -> b c t")
@@ -174,7 +201,6 @@ class FaceEncoder(nn.Module):
         x_local = x.clone()
 
         return x_local
-
 
 
 class RMSNorm(nn.Module):
@@ -263,7 +289,6 @@ class FaceAdapter(nn.Module):
         dtype=None,
         device=None,
     ):
-
         factory_kwargs = {"dtype": dtype, "device": device}
         super().__init__()
         self.hidden_size = hidden_dim
@@ -289,9 +314,7 @@ class FaceAdapter(nn.Module):
         freqs_cis_q: Tuple[torch.Tensor, torch.Tensor] = None,
         freqs_cis_k: Tuple[torch.Tensor, torch.Tensor] = None,
     ) -> torch.Tensor:
-
         return self.fuser_blocks[idx](x, motion_embed, freqs_cis_q, freqs_cis_k)
-
 
 
 class FaceBlock(nn.Module):
@@ -313,7 +336,7 @@ class FaceBlock(nn.Module):
         self.heads_num = heads_num
         head_dim = hidden_size // heads_num
         self.scale = qk_scale or head_dim**-0.5
-       
+
         self.linear1_kv = nn.Linear(hidden_size, hidden_size * 2, **factory_kwargs)
         self.linear1_q = nn.Linear(hidden_size, hidden_size, **factory_kwargs)
 
@@ -321,15 +344,23 @@ class FaceBlock(nn.Module):
 
         qk_norm_layer = get_norm_layer(qk_norm_type)
         self.q_norm = (
-            qk_norm_layer(head_dim, elementwise_affine=True, eps=1e-6, **factory_kwargs) if qk_norm else nn.Identity()
+            qk_norm_layer(head_dim, elementwise_affine=True, eps=1e-6, **factory_kwargs)
+            if qk_norm
+            else nn.Identity()
         )
         self.k_norm = (
-            qk_norm_layer(head_dim, elementwise_affine=True, eps=1e-6, **factory_kwargs) if qk_norm else nn.Identity()
+            qk_norm_layer(head_dim, elementwise_affine=True, eps=1e-6, **factory_kwargs)
+            if qk_norm
+            else nn.Identity()
         )
 
-        self.pre_norm_feat = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6, **factory_kwargs)
+        self.pre_norm_feat = nn.LayerNorm(
+            hidden_size, elementwise_affine=False, eps=1e-6, **factory_kwargs
+        )
 
-        self.pre_norm_motion = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6, **factory_kwargs)
+        self.pre_norm_motion = nn.LayerNorm(
+            hidden_size, elementwise_affine=False, eps=1e-6, **factory_kwargs
+        )
 
     def forward(
         self,
@@ -338,7 +369,6 @@ class FaceBlock(nn.Module):
         motion_mask: Optional[torch.Tensor] = None,
         use_context_parallel=False,
     ) -> torch.Tensor:
-        
         B, T, N, C = motion_vec.shape
         T_comp = T
 
@@ -355,13 +385,13 @@ class FaceBlock(nn.Module):
         q = self.q_norm(q).to(v)
         k = self.k_norm(k).to(v)
 
-        k = rearrange(k, "B L N H D -> (B L) N H D")  
-        v = rearrange(v, "B L N H D -> (B L) N H D") 
+        k = rearrange(k, "B L N H D -> (B L) N H D")
+        v = rearrange(v, "B L N H D -> (B L) N H D")
 
         if use_context_parallel:
             q = gather_forward(q, dim=1)
 
-        q = rearrange(q, "B (L S) H D -> (B L) S H D", L=T_comp)  
+        q = rearrange(q, "B (L S) H D -> (B L) S H D", L=T_comp)
         # Compute attention.
         attn = attention(
             q,
@@ -378,6 +408,8 @@ class FaceBlock(nn.Module):
         output = self.linear2(attn)
 
         if motion_mask is not None:
-            output = output * rearrange(motion_mask, "B T H W -> B (T H W)").unsqueeze(-1)
+            output = output * rearrange(motion_mask, "B T H W -> B (T H W)").unsqueeze(
+                -1
+            )
 
         return output

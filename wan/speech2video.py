@@ -45,7 +45,6 @@ def load_safetensors(path):
 
 
 class WanS2V:
-
     def __init__(
         self,
         config,
@@ -101,7 +100,7 @@ class WanS2V:
         self.text_encoder = T5EncoderModel(
             text_len=config.text_len,
             dtype=config.t5_dtype,
-            device=torch.device('cpu'),
+            device=torch.device("cpu"),
             checkpoint_path=os.path.join(checkpoint_dir, config.t5_checkpoint),
             tokenizer_path=os.path.join(checkpoint_dir, config.t5_tokenizer),
             shard_fn=shard_fn if t5_fsdp else None,
@@ -109,28 +108,30 @@ class WanS2V:
 
         self.vae = Wan2_1_VAE(
             vae_pth=os.path.join(checkpoint_dir, config.vae_checkpoint),
-            device=self.device)
+            device=self.device,
+        )
 
         logging.info(f"Creating WanModel from {checkpoint_dir}")
         if not dit_fsdp:
             self.noise_model = WanModel_S2V.from_pretrained(
-                checkpoint_dir,
-                torch_dtype=self.param_dtype,
-                device_map=self.device)
+                checkpoint_dir, torch_dtype=self.param_dtype, device_map=self.device
+            )
         else:
             self.noise_model = WanModel_S2V.from_pretrained(
-                checkpoint_dir, torch_dtype=self.param_dtype)
+                checkpoint_dir, torch_dtype=self.param_dtype
+            )
 
         self.noise_model = self._configure_model(
             model=self.noise_model,
             use_sp=use_sp,
             dit_fsdp=dit_fsdp,
             shard_fn=shard_fn,
-            convert_model_dtype=convert_model_dtype)
+            convert_model_dtype=convert_model_dtype,
+        )
 
         self.audio_encoder = AudioEncoder(
-            model_id=os.path.join(checkpoint_dir,
-                                  "wav2vec2-large-xlsr-53-english"))
+            model_id=os.path.join(checkpoint_dir, "wav2vec2-large-xlsr-53-english")
+        )
 
         if use_sp:
             self.sp_size = get_world_size()
@@ -143,8 +144,7 @@ class WanS2V:
         self.fps = config.sample_fps
         self.audio_sample_m = 0
 
-    def _configure_model(self, model, use_sp, dit_fsdp, shard_fn,
-                         convert_model_dtype):
+    def _configure_model(self, model, use_sp, dit_fsdp, shard_fn, convert_model_dtype):
         """
         Configures a model object. This includes setting evaluation modes,
         applying distributed parallel strategy, and handling device placement.
@@ -170,7 +170,8 @@ class WanS2V:
         if use_sp:
             for block in model.blocks:
                 block.self_attn.forward = types.MethodType(
-                    sp_attn_forward_s2v, block.self_attn)
+                    sp_attn_forward_s2v, block.self_attn
+                )
             model.use_context_parallel = True
 
         if dist.is_initialized():
@@ -186,11 +187,9 @@ class WanS2V:
 
         return model
 
-    def get_size_less_than_area(self,
-                                height,
-                                width,
-                                target_area=1024 * 704,
-                                divisor=64):
+    def get_size_less_than_area(
+        self, height, width, target_area=1024 * 704, divisor=64
+    ):
         if height * width <= target_area:
             # If the original image area is already less than or equal to the target,
             # no resizing is needed—just padding. Still need to ensure that the padded area doesn't exceed the target.
@@ -199,7 +198,9 @@ class WanS2V:
             max_scale = 1.0
         else:
             # Resize to fit within the target area and then pad to multiples of `divisor`
-            max_upper_area = target_area  # Maximum allowed total pixel count after padding
+            max_upper_area = (
+                target_area  # Maximum allowed total pixel count after padding
+            )
             d = divisor - 1
             b = d * (height + width)
             a = height * width
@@ -207,9 +208,11 @@ class WanS2V:
 
             # Calculate scale boundaries using quadratic equation
             min_scale = (-b + math.sqrt(b**2 - 2 * a * c)) / (
-                2 * a)  # Scale when maximum padding is applied
-            max_scale = math.sqrt(max_upper_area /
-                                  (height * width))  # Scale without any padding
+                2 * a
+            )  # Scale when maximum padding is applied
+            max_scale = math.sqrt(
+                max_upper_area / (height * width)
+            )  # Scale without any padding
 
         # We want to choose the largest possible scale such that the final padded area does not exceed max_upper_area
         # Use binary search-like iteration to find this scale
@@ -237,10 +240,10 @@ class WanS2V:
         else:
             # Fallback: calculate target dimensions based on aspect ratio and divisor alignment
             aspect_ratio = width / height
-            target_width = int(
-                (target_area * aspect_ratio)**0.5 // divisor * divisor)
+            target_width = int((target_area * aspect_ratio) ** 0.5 // divisor * divisor)
             target_height = int(
-                (target_area / aspect_ratio)**0.5 // divisor * divisor)
+                (target_area / aspect_ratio) ** 0.5 // divisor * divisor
+            )
 
             # Ensure the result is not larger than the original resolution
             if target_width >= width or target_height >= height:
@@ -249,29 +252,31 @@ class WanS2V:
 
             return target_height, target_width
 
-    def prepare_default_cond_input(self,
-                                   map_shape=[3, 12, 64, 64],
-                                   motion_frames=5,
-                                   lat_motion_frames=2,
-                                   enable_mano=False,
-                                   enable_kp=False,
-                                   enable_pose=False):
+    def prepare_default_cond_input(
+        self,
+        map_shape=[3, 12, 64, 64],
+        motion_frames=5,
+        lat_motion_frames=2,
+        enable_mano=False,
+        enable_kp=False,
+        enable_pose=False,
+    ):
         default_value = [1.0, -1.0, -1.0]
         cond_enable = [enable_mano, enable_kp, enable_pose]
         cond = []
         for d, c in zip(default_value, cond_enable):
             if c:
-                map_value = torch.ones(
-                    map_shape, dtype=self.param_dtype, device=self.device) * d
-                cond_lat = torch.cat([
-                    map_value[:, :, 0:1].repeat(1, 1, motion_frames, 1, 1),
-                    map_value
-                ],
-                                     dim=2)
-                cond_lat = torch.stack(
-                    self.vae.encode(cond_lat.to(
-                        self.param_dtype)))[:, :, lat_motion_frames:].to(
-                            self.param_dtype)
+                map_value = (
+                    torch.ones(map_shape, dtype=self.param_dtype, device=self.device)
+                    * d
+                )
+                cond_lat = torch.cat(
+                    [map_value[:, :, 0:1].repeat(1, 1, motion_frames, 1, 1), map_value],
+                    dim=2,
+                )
+                cond_lat = torch.stack(self.vae.encode(cond_lat.to(self.param_dtype)))[
+                    :, :, lat_motion_frames:
+                ].to(self.param_dtype)
 
                 cond.append(cond_lat)
         if len(cond) >= 1:
@@ -281,12 +286,11 @@ class WanS2V:
         return cond
 
     def encode_audio(self, audio_path, infer_frames):
-        z = self.audio_encoder.extract_audio_feat(
-            audio_path, return_all_layers=True)
+        z = self.audio_encoder.extract_audio_feat(audio_path, return_all_layers=True)
         audio_embed_bucket, num_repeat = self.audio_encoder.get_audio_embed_bucket_fps(
-            z, fps=self.fps, batch_frames=infer_frames, m=self.audio_sample_m)
-        audio_embed_bucket = audio_embed_bucket.to(self.device,
-                                                   self.param_dtype)
+            z, fps=self.fps, batch_frames=infer_frames, m=self.audio_sample_m
+        )
+        audio_embed_bucket = audio_embed_bucket.to(self.device, self.param_dtype)
         audio_embed_bucket = audio_embed_bucket.unsqueeze(0)
         if len(audio_embed_bucket.shape) == 3:
             audio_embed_bucket = audio_embed_bucket.permute(0, 2, 1)
@@ -294,11 +298,7 @@ class WanS2V:
             audio_embed_bucket = audio_embed_bucket.permute(0, 2, 3, 1)
         return audio_embed_bucket, num_repeat
 
-    def read_last_n_frames(self,
-                           video_path,
-                           n_frames,
-                           target_fps=16,
-                           reverse=False):
+    def read_last_n_frames(self, video_path, n_frames, target_fps=16, reverse=False):
         """
         Read the last `n_frames` from a video at the specified frame rate.
 
@@ -306,7 +306,7 @@ class WanS2V:
             video_path (str): Path to the video file.
             n_frames (int): Number of frames to read.
             target_fps (int, optional): Target sampling frame rate. Defaults to 16.
-            reverse (bool, optional): Whether to read frames in reverse order. 
+            reverse (bool, optional): Whether to read frames in reverse order.
                                     If True, reads the first `n_frames` instead of the last ones.
 
         Returns:
@@ -320,8 +320,7 @@ class WanS2V:
 
         required_span = (n_frames - 1) * interval
 
-        start_frame = max(0, total_frames - required_span -
-                          1) if not reverse else 0
+        start_frame = max(0, total_frames - required_span - 1) if not reverse else 0
 
         sampled_indices = []
         for i in range(n_frames):
@@ -340,7 +339,8 @@ class WanS2V:
                 pose_video,
                 n_frames=infer_frames * num_repeat,
                 target_fps=self.fps,
-                reverse=True)
+                reverse=True,
+            )
 
             resize_opreat = transforms.Resize(min(HEIGHT, WIDTH))
             crop_opreat = transforms.CenterCrop((HEIGHT, WIDTH))
@@ -348,15 +348,15 @@ class WanS2V:
 
             cond_tensor = torch.from_numpy(pose_seq)
             cond_tensor = cond_tensor.permute(0, 3, 1, 2) / 255.0 * 2 - 1.0
-            cond_tensor = crop_opreat(resize_opreat(cond_tensor)).permute(
-                1, 0, 2, 3).unsqueeze(0)
+            cond_tensor = (
+                crop_opreat(resize_opreat(cond_tensor)).permute(1, 0, 2, 3).unsqueeze(0)
+            )
 
             padding_frame_num = num_repeat * infer_frames - cond_tensor.shape[2]
-            cond_tensor = torch.cat([
-                cond_tensor,
-                - torch.ones([1, 3, padding_frame_num, HEIGHT, WIDTH])
-            ],
-                                    dim=2)
+            cond_tensor = torch.cat(
+                [cond_tensor, -torch.ones([1, 3, padding_frame_num, HEIGHT, WIDTH])],
+                dim=2,
+            )
 
             cond_tensors = torch.chunk(cond_tensor, num_repeat, dim=2)
         else:
@@ -365,13 +365,12 @@ class WanS2V:
         COND = []
         for r in range(len(cond_tensors)):
             cond = cond_tensors[r]
-            cond = torch.cat([cond[:, :, 0:1].repeat(1, 1, 1, 1, 1), cond],
-                             dim=2)
+            cond = torch.cat([cond[:, :, 0:1].repeat(1, 1, 1, 1, 1), cond], dim=2)
             cond_lat = torch.stack(
-                self.vae.encode(
-                    cond.to(dtype=self.param_dtype,
-                            device=self.device)))[:, :,
-                                                  1:].cpu()  # for mem save
+                self.vae.encode(cond.to(dtype=self.param_dtype, device=self.device))
+            )[
+                :, :, 1:
+            ].cpu()  # for mem save
             COND.append(cond_lat)
         return COND
 
@@ -380,13 +379,13 @@ class WanS2V:
             HEIGHT, WIDTH = size
         else:
             if pre_video_path:
-                ref_image = self.read_last_n_frames(
-                    pre_video_path, n_frames=1)[0]
+                ref_image = self.read_last_n_frames(pre_video_path, n_frames=1)[0]
             else:
-                ref_image = np.array(Image.open(ref_image_path).convert('RGB'))
+                ref_image = np.array(Image.open(ref_image_path).convert("RGB"))
             HEIGHT, WIDTH = ref_image.shape[:2]
         HEIGHT, WIDTH = self.get_size_less_than_area(
-            HEIGHT, WIDTH, target_area=max_area)
+            HEIGHT, WIDTH, target_area=max_area
+        )
         return (HEIGHT, WIDTH)
 
     def generate(
@@ -403,7 +402,7 @@ class WanS2V:
         max_area=720 * 1280,
         infer_frames=80,
         shift=5.0,
-        sample_solver='unipc',
+        sample_solver="unipc",
         sampling_steps=40,
         guide_scale=5.0,
         n_prompt="",
@@ -462,7 +461,8 @@ class WanS2V:
             size=None,
             max_area=max_area,
             ref_image_path=ref_image_path,
-            pre_video_path=None)
+            pre_video_path=None,
+        )
         HEIGHT, WIDTH = size
         channel = 3
 
@@ -474,12 +474,13 @@ class WanS2V:
         motion_latents = None
 
         if ref_image is None:
-            ref_image = np.array(Image.open(ref_image_path).convert('RGB'))
+            ref_image = np.array(Image.open(ref_image_path).convert("RGB"))
         if motion_latents is None:
             motion_latents = torch.zeros(
                 [1, channel, self.motion_frames, HEIGHT, WIDTH],
                 dtype=self.param_dtype,
-                device=self.device)
+                device=self.device,
+            )
 
         # extract audio emb
         if enable_tts is True:
@@ -492,10 +493,12 @@ class WanS2V:
         model_pic = crop_opreat(resize_opreat(Image.fromarray(ref_image)))
 
         ref_pixel_values = tensor_trans(model_pic)
-        ref_pixel_values = ref_pixel_values.unsqueeze(1).unsqueeze(
-            0) * 2 - 1.0  # b c 1 h w
+        ref_pixel_values = (
+            ref_pixel_values.unsqueeze(1).unsqueeze(0) * 2 - 1.0
+        )  # b c 1 h w
         ref_pixel_values = ref_pixel_values.to(
-            dtype=self.vae.dtype, device=self.vae.device)
+            dtype=self.vae.dtype, device=self.vae.device
+        )
         ref_latents = torch.stack(self.vae.encode(ref_pixel_values))
 
         # encode the motion latents
@@ -511,7 +514,8 @@ class WanS2V:
             pose_video=pose_video,
             num_repeat=num_repeat,
             infer_frames=infer_frames,
-            size=size)
+            size=size,
+        )
 
         seed = seed if seed >= 0 else random.randint(0, sys.maxsize)
 
@@ -526,23 +530,24 @@ class WanS2V:
             if offload_model:
                 self.text_encoder.model.cpu()
         else:
-            context = self.text_encoder([input_prompt], torch.device('cpu'))
-            context_null = self.text_encoder([n_prompt], torch.device('cpu'))
+            context = self.text_encoder([input_prompt], torch.device("cpu"))
+            context_null = self.text_encoder([n_prompt], torch.device("cpu"))
             context = [t.to(self.device) for t in context]
             context_null = [t.to(self.device) for t in context_null]
 
         out = []
         # evaluation mode
         with (
-                torch.amp.autocast('cuda', dtype=self.param_dtype),
-                torch.no_grad(),
+            torch.amp.autocast("cuda", dtype=self.param_dtype),
+            torch.no_grad(),
         ):
             for r in range(num_repeat):
                 seed_g = torch.Generator(device=self.device)
                 seed_g.manual_seed(seed + r)
 
-                lat_target_frames = (infer_frames + 3 + self.motion_frames
-                                    ) // 4 - lat_motion_frames
+                lat_target_frames = (
+                    infer_frames + 3 + self.motion_frames
+                ) // 4 - lat_motion_frames
                 target_shape = [lat_target_frames, HEIGHT // 8, WIDTH // 8]
                 noise = [
                     torch.randn(
@@ -552,28 +557,31 @@ class WanS2V:
                         target_shape[2],
                         dtype=self.param_dtype,
                         device=self.device,
-                        generator=seed_g)
+                        generator=seed_g,
+                    )
                 ]
                 max_seq_len = np.prod(target_shape) // 4
 
-                if sample_solver == 'unipc':
+                if sample_solver == "unipc":
                     sample_scheduler = FlowUniPCMultistepScheduler(
                         num_train_timesteps=self.num_train_timesteps,
                         shift=1,
-                        use_dynamic_shifting=False)
+                        use_dynamic_shifting=False,
+                    )
                     sample_scheduler.set_timesteps(
-                        sampling_steps, device=self.device, shift=shift)
+                        sampling_steps, device=self.device, shift=shift
+                    )
                     timesteps = sample_scheduler.timesteps
-                elif sample_solver == 'dpm++':
+                elif sample_solver == "dpm++":
                     sample_scheduler = FlowDPMSolverMultistepScheduler(
                         num_train_timesteps=self.num_train_timesteps,
                         shift=1,
-                        use_dynamic_shifting=False)
+                        use_dynamic_shifting=False,
+                    )
                     sampling_sigmas = get_sampling_sigmas(sampling_steps, shift)
                     timesteps, _ = retrieve_timesteps(
-                        sample_scheduler,
-                        device=self.device,
-                        sigmas=sampling_sigmas)
+                        sample_scheduler, device=self.device, sigmas=sampling_sigmas
+                    )
                 else:
                     raise NotImplementedError("Unsupported solver.")
 
@@ -583,31 +591,30 @@ class WanS2V:
                     right_idx = r * infer_frames + infer_frames
                     cond_latents = COND[r] if pose_video else COND[0] * 0
                     cond_latents = cond_latents.to(
-                        dtype=self.param_dtype, device=self.device)
+                        dtype=self.param_dtype, device=self.device
+                    )
                     audio_input = audio_emb[..., left_idx:right_idx]
                 input_motion_latents = motion_latents.clone()
 
                 arg_c = {
-                    'context': context[0:1],
-                    'seq_len': max_seq_len,
-                    'cond_states': cond_latents,
+                    "context": context[0:1],
+                    "seq_len": max_seq_len,
+                    "cond_states": cond_latents,
                     "motion_latents": input_motion_latents,
-                    'ref_latents': ref_latents,
+                    "ref_latents": ref_latents,
                     "audio_input": audio_input,
                     "motion_frames": [self.motion_frames, lat_motion_frames],
                     "drop_motion_frames": drop_first_motion and r == 0,
                 }
                 if guide_scale > 1:
                     arg_null = {
-                        'context': context_null[0:1],
-                        'seq_len': max_seq_len,
-                        'cond_states': cond_latents,
+                        "context": context_null[0:1],
+                        "seq_len": max_seq_len,
+                        "cond_states": cond_latents,
                         "motion_latents": input_motion_latents,
-                        'ref_latents': ref_latents,
+                        "ref_latents": ref_latents,
                         "audio_input": 0.0 * audio_input,
-                        "motion_frames": [
-                            self.motion_frames, lat_motion_frames
-                        ],
+                        "motion_frames": [self.motion_frames, lat_motion_frames],
                         "drop_motion_frames": drop_first_motion and r == 0,
                     }
                 if offload_model or self.init_on_cpu:
@@ -621,11 +628,13 @@ class WanS2V:
                     timestep = torch.stack(timestep).to(self.device)
 
                     noise_pred_cond = self.noise_model(
-                        latent_model_input, t=timestep, **arg_c)
+                        latent_model_input, t=timestep, **arg_c
+                    )
 
                     if guide_scale > 1:
                         noise_pred_uncond = self.noise_model(
-                            latent_model_input, t=timestep, **arg_null)
+                            latent_model_input, t=timestep, **arg_null
+                        )
                         noise_pred = [
                             u + guide_scale * (c - u)
                             for c, u in zip(noise_pred_cond, noise_pred_uncond)
@@ -638,7 +647,8 @@ class WanS2V:
                         t,
                         latents[0].unsqueeze(0),
                         return_dict=False,
-                        generator=seed_g)[0]
+                        generator=seed_g,
+                    )[0]
                     latents[0] = temp_x0.squeeze(0)
 
                 if offload_model:
@@ -652,19 +662,21 @@ class WanS2V:
                     decode_latents = torch.cat([ref_latents, latents], dim=2)
                 image = torch.stack(self.vae.decode(decode_latents))
                 image = image[:, :, -(infer_frames):]
-                if (drop_first_motion and r == 0):
+                if drop_first_motion and r == 0:
                     image = image[:, :, 3:]
 
                 overlap_frames_num = min(self.motion_frames, image.shape[2])
-                videos_last_frames = torch.cat([
-                    videos_last_frames[:, :, overlap_frames_num:],
-                    image[:, :, -overlap_frames_num:]
-                ],
-                                               dim=2)
+                videos_last_frames = torch.cat(
+                    [
+                        videos_last_frames[:, :, overlap_frames_num:],
+                        image[:, :, -overlap_frames_num:],
+                    ],
+                    dim=2,
+                )
                 videos_last_frames = videos_last_frames.to(
-                    dtype=motion_latents.dtype, device=motion_latents.device)
-                motion_latents = torch.stack(
-                    self.vae.encode(videos_last_frames))
+                    dtype=motion_latents.dtype, device=motion_latents.device
+                )
+                motion_latents = torch.stack(self.vae.encode(videos_last_frames))
                 out.append(image.cpu())
 
         videos = torch.cat(out, dim=2)
@@ -679,29 +691,39 @@ class WanS2V:
         return videos[0] if self.rank == 0 else None
 
     def tts(self, tts_prompt_audio, tts_prompt_text, tts_text):
-        if not hasattr(self, 'cosyvoice'):
+        if not hasattr(self, "cosyvoice"):
             self.load_tts()
         speech_list = []
-        from cosyvoice.utils.file_utils import load_wav
         import torchaudio
+        from cosyvoice.utils.file_utils import load_wav
+
         prompt_speech_16k = load_wav(tts_prompt_audio, 16000)
         if tts_prompt_text is not None:
-            for i in self.cosyvoice.inference_zero_shot(tts_text, tts_prompt_text, prompt_speech_16k):
-                speech_list.append(i['tts_speech'])
+            for i in self.cosyvoice.inference_zero_shot(
+                tts_text, tts_prompt_text, prompt_speech_16k
+            ):
+                speech_list.append(i["tts_speech"])
         else:
-            for i in self.cosyvoice.inference_cross_lingual(tts_text, prompt_speech_16k):
-                speech_list.append(i['tts_speech'])
-        torchaudio.save('tts.wav', torch.concat(speech_list, dim=1), self.cosyvoice.sample_rate)
-        return 'tts.wav'
+            for i in self.cosyvoice.inference_cross_lingual(
+                tts_text, prompt_speech_16k
+            ):
+                speech_list.append(i["tts_speech"])
+        torchaudio.save(
+            "tts.wav", torch.concat(speech_list, dim=1), self.cosyvoice.sample_rate
+        )
+        return "tts.wav"
 
     def load_tts(self):
-        if not os.path.exists('CosyVoice'):
+        if not os.path.exists("CosyVoice"):
             from wan.utils.utils import download_cosyvoice_repo
-            download_cosyvoice_repo('CosyVoice')
-        if not os.path.exists('CosyVoice2-0.5B'):
+
+            download_cosyvoice_repo("CosyVoice")
+        if not os.path.exists("CosyVoice2-0.5B"):
             from wan.utils.utils import download_cosyvoice_model
-            download_cosyvoice_model('CosyVoice2-0.5B', 'CosyVoice2-0.5B')
-        sys.path.append('CosyVoice')
-        sys.path.append('CosyVoice/third_party/Matcha-TTS')
+
+            download_cosyvoice_model("CosyVoice2-0.5B", "CosyVoice2-0.5B")
+        sys.path.append("CosyVoice")
+        sys.path.append("CosyVoice/third_party/Matcha-TTS")
         from cosyvoice.cli.cosyvoice import CosyVoice2
-        self.cosyvoice = CosyVoice2('CosyVoice2-0.5B')
+
+        self.cosyvoice = CosyVoice2("CosyVoice2-0.5B")

@@ -7,11 +7,11 @@ from .util import all_to_all
 
 
 def distributed_attention(
-        q,
-        k,
-        v,
-        seq_lens,
-        window_size=(-1, -1),
+    q,
+    k,
+    v,
+    seq_lens,
+    window_size=(-1, -1),
 ):
     """
     Performs distributed attention based on DeepSpeed Ulysses attention mechanism.

@@ -311,3 +311,20 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+"""
+python examples/ti2v_vae_infer.py \
+    --ckpt_dir Wan2.2-TI2V-5B/ \
+    --video examples/source/output_3s_008.mp4 \
+    --output examples/wan2.2/output_3s_008.mp4 \
+    --stride-compat pad --resize 1280x704 --bfloat16 --version 2.2
+
+python /home/jovyan/runs/charles/code/mesh_webviewer/create_mesh_comparison.py \
+	s3://3dfm-data/users/cshang/mp4/ltx/ \
+	s3://3dfm-data/users/cshang/mp4/source/ \
+	s3://3dfm-data/users/cshang/mp4/wan2.2/ \
+	--captions "ltx" \
+	--captions "source" \
+	--captions "wan2.2" \
+	--comparison_sub_dir comparisons/creiser/mp4_test
+"""

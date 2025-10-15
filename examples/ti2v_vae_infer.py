@@ -45,7 +45,7 @@ def _load_video(path: str) -> Tuple[torch.Tensor, Optional[float]]:
     return tensor.permute(3, 0, 1, 2), fps
 
 
-def _save_video(video: torch.Tensor, path: str, fps: int, quality=8) -> None:
+def _save_video(video: torch.Tensor, path: str, fps: int, quality=5) -> None:
     """Save a (C, T, H, W) tensor to disk using Wan's helper."""
     save_video(video.unsqueeze(0), save_file=path, fps=fps, nrow=1, normalize=True, quality=quality)
 

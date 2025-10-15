@@ -263,6 +263,7 @@ class AttentionBlock(nn.Module):
         x = rearrange(x, "b c t h w -> (b t) c h w")
         x = self.norm(x)
         # compute query, key, value
+        # spatial self-attention
         q, k, v = (
             self.to_qkv(x)
             .reshape(b * t, 1, c * 3, -1)

@@ -192,6 +192,8 @@ def run_inference(
     else:
         vae = Wan2_1_VAE(vae_pth=vae_path, device=device, dtype=dtype)
     vae.model = vae.model.to(device)
+    num_params = sum(p.numel() for p in vae.model.parameters())
+    print(f"Wan VAE parameters: {num_params / 10**6: .2f}M")
     timings["model_loading"] = time.perf_counter() - model_start
 
     infer_start = time.perf_counter()

@@ -13,7 +13,6 @@ import wan
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
 from wan.utils.utils import save_video
 
-
 PIPELINE_CACHE: Dict[Tuple[str, str, bool, bool], object] = {}
 DEVICE_ID = int(os.environ.get("WAN_DEVICE_ID", 0))
 
@@ -31,8 +30,7 @@ def _normalize_frame_num(value: int) -> int:
     return value if remainder == 0 else value - remainder
 
 
-def _load_pipeline(task: str, ckpt_dir: str, convert_model_dtype: bool,
-                   t5_cpu: bool):
+def _load_pipeline(task: str, ckpt_dir: str, convert_model_dtype: bool, t5_cpu: bool):
     key = (task, os.path.abspath(ckpt_dir), convert_model_dtype, t5_cpu)
     pipeline = PIPELINE_CACHE.get(key)
     if pipeline is not None:
@@ -92,21 +90,23 @@ def _save_video_tensor(tensor, fps: int, save_path: str = None) -> str:
     return save_path
 
 
-def generate_video(task: str,
-                   ckpt_dir: str,
-                   prompt: str,
-                   image: Image.Image,
-                   size_key: str,
-                   frame_num: int,
-                   sampling_steps: int,
-                   shift: float,
-                   guide_low: float,
-                   guide_high: float,
-                   solver: str,
-                   seed: int,
-                   offload_model: bool,
-                   convert_model_dtype: bool,
-                   t5_cpu: bool):
+def generate_video(
+    task: str,
+    ckpt_dir: str,
+    prompt: str,
+    image: Image.Image,
+    size_key: str,
+    frame_num: int,
+    sampling_steps: int,
+    shift: float,
+    guide_low: float,
+    guide_high: float,
+    solver: str,
+    seed: int,
+    offload_model: bool,
+    convert_model_dtype: bool,
+    t5_cpu: bool,
+):
     _require_cuda()
 
     prompt = prompt.strip()
@@ -131,7 +131,7 @@ def generate_video(task: str,
     # Create output directory
     output_dir = Path("./output")
     output_dir.mkdir(exist_ok=True)
-    
+
     # Generate unique filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_stem = f"{task}_{timestamp}"
@@ -214,13 +214,13 @@ def generate_video(task: str,
             f.write(prompt)
 
     save_path = _save_video_tensor(video, cfg.sample_fps, str(video_path))
-    
+
     # Format guide_scale for display
     if isinstance(guide_scale, tuple):
         guide_str = f"({guide_scale[0]:.2f}, {guide_scale[1]:.2f})"
     else:
         guide_str = f"{guide_scale:.2f}"
-    
+
     info = (
         f"Task: {task} | Size: {size_key} | Steps: {sampling_steps} | "
         f"Guide: {guide_str} | Seed: {seed}\n"
@@ -375,8 +375,15 @@ with gr.Blocks(title="Wan2.2 Demo") as demo:
     task.change(
         update_task_ui,
         inputs=[task],
-        outputs=[size, image_input, guide_low, guide_high, shift, frame_num,
-                 sampling_steps],
+        outputs=[
+            size,
+            image_input,
+            guide_low,
+            guide_high,
+            shift,
+            frame_num,
+            sampling_steps,
+        ],
     )
 
     generate_btn.click(

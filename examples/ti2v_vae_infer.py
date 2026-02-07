@@ -18,8 +18,8 @@ import torch
 import torch.nn.functional as F
 
 from wan.configs import WAN_CONFIGS
-from wan.modules.vae2_2 import Wan2_2_VAE
 from wan.modules.vae2_1 import Wan2_1_VAE
+from wan.modules.vae2_2 import Wan2_2_VAE
 from wan.utils.utils import save_video
 
 try:
@@ -47,7 +47,14 @@ def _load_video(path: str) -> Tuple[torch.Tensor, Optional[float]]:
 
 def _save_video(video: torch.Tensor, path: str, fps: int, quality=5) -> None:
     """Save a (C, T, H, W) tensor to disk using Wan's helper."""
-    save_video(video.unsqueeze(0), save_file=path, fps=fps, nrow=1, normalize=True, quality=quality)
+    save_video(
+        video.unsqueeze(0),
+        save_file=path,
+        fps=fps,
+        nrow=1,
+        normalize=True,
+        quality=quality,
+    )
 
 
 def _resize_video(video: torch.Tensor, size: Optional[Tuple[int, int]]) -> torch.Tensor:
